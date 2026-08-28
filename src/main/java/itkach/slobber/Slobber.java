@@ -108,6 +108,7 @@ public class Slobber implements Container {
     }
 
     static Map<String, String> MimeTypes = new HashMap<String, String>();
+    private static final int TRANSFER_BUFFER_SIZE = 64 * 1024;
 
     static {
         MimeTypes.put("html", "text/html");
@@ -125,12 +126,10 @@ public class Slobber implements Container {
     }
 
     static void pipe(InputStream in, OutputStream out) throws IOException {
-        while (true) {
-            int b = in.read();
-            if (b == -1) {
-                break;
-            }
-            out.write(b);
+        byte[] buffer = new byte[TRANSFER_BUFFER_SIZE];
+        int count;
+        while ((count = in.read(buffer)) != -1) {
+            out.write(buffer, 0, count);
         }
     }
 
@@ -181,12 +180,12 @@ public class Slobber implements Container {
             }
 
             String mimeType = MimeTypes.get(extension);
-            InputStream is = new FileInputStream(resourceFile);
-            if (mimeType != null) {
-                resp.setValue("Content-Type", mimeType);
+            try (InputStream is = new FileInputStream(resourceFile)) {
+                if (mimeType != null) {
+                    resp.setValue("Content-Type", mimeType);
+                }
+                pipe(is, resp.getOutputStream());
             }
-            pipe(is, resp.getOutputStream());
-            is.close();
         }
     }
 
@@ -207,13 +206,14 @@ public class Slobber implements Container {
                 notFound(resp);
                 return;
             }
-            String mimeType = MimeTypes.get(extension);
-            if (mimeType != null) {
-                resp.setValue("Content-Type", mimeType);
+            try (InputStream input = is) {
+                String mimeType = MimeTypes.get(extension);
+                if (mimeType != null) {
+                    resp.setValue("Content-Type", mimeType);
+                }
+                resp.setValue("Cache-Control", "public, max-age=86400");
+                pipe(input, resp.getOutputStream());
             }
-            resp.setValue("Cache-Control", "public, max-age=86400");
-            pipe(is, resp.getOutputStream());
-            is.close();
         }
     }
 

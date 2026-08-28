@@ -57,6 +57,7 @@ dependencies {
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.4.2'
     implementation 'com.fasterxml.jackson.core:jackson-core:2.4.2'
     implementation 'com.fasterxml.jackson.core:jackson-annotations:2.4.2'
+    implementation 'org.jsoup:jsoup:1.23.2'
     api files('libs/simple-5.1.7.1.itkach.jar')
     api project(':slobj')
  }

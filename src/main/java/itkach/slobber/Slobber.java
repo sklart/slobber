@@ -319,6 +319,7 @@ public class Slobber implements Container {
     private Map<String, Object> toInfoItem(Slob s) {
         Map<String, Object> data = new HashMap<String, Object>();
         data.put("id", s.getId().toString());
+        data.put("uri", s.getURI());
         data.put("file", s.fileURI);
         data.put("compression", s.header.compression);
         data.put("encoding", s.header.encoding);
@@ -383,6 +384,7 @@ public class Slobber implements Container {
                     item.put("url", mkContentURL(b));
                     item.put("label", b.key);
                     item.put("dictLabel", b.owner.getTags().get("label"));
+                    item.put("dictUri", b.owner.getURI());
                     items.add(item);
                 }
                 response.setValue("Content-Type", "application/json");
@@ -404,6 +406,7 @@ public class Slobber implements Container {
                 Map<String, String> item = new HashMap<String, String>();
                 item.put("url", mkContentURL(blob));
                 item.put("label", blob.key);
+                item.put("dictUri", blob.owner.getURI());
                 response.setValue("Content-Type", "application/json");
                 response.setValue("Cache-Control", "no-cache");
                 OutputStream out = response.getOutputStream();
@@ -522,10 +525,12 @@ public class Slobber implements Container {
                     return;
                 }
 
+                String styleTitle = q.get("style");
+
                 if (isSlobId && blobId != null) {
                     resp.setValue("Cache-Control", "max-age=31556926");
                     Slob.Content reader = slob.getContent(blobId);
-                    serveContent(resp, reader);
+                    serveContent(resp, reader, styleTitle);
                     return;
                 }
 
@@ -553,7 +558,7 @@ public class Slobber implements Container {
                         resp.setValue("Cache-Control", "max-age=600");
                         resp.setValue("ETag", mkETag(slob.getId()));
                     }
-                    serveContent(resp, blob.getContent());
+                    serveContent(resp, blob.getContent(), styleTitle);
                     return;
                 }
 
@@ -566,9 +571,34 @@ public class Slobber implements Container {
 
     private void serveContent(Response resp,
                               Slob.Content content) throws IOException {
+        serveContent(resp, content, null);
+    }
+
+    private void serveContent(Response resp,
+                              Slob.Content content, String styleTitle) throws IOException {
         resp.setValue("Content-Type", content.type);
         ByteBuffer bytes = content.data;
+        if (styleTitle != null && content.type != null &&
+                content.type.toLowerCase().startsWith("text/html")) {
+            String charset = charsetOf(content.type);
+            ByteBuffer dup = bytes.duplicate();
+            byte[] originalBytes = new byte[dup.remaining()];
+            dup.get(originalBytes);
+            String html = new String(originalBytes, charset);
+            String styledHtml = StylePreference.apply(html, styleTitle);
+            if (!styledHtml.equals(html)) {
+                bytes = ByteBuffer.wrap(styledHtml.getBytes(charset));
+            }
+        }
         resp.getByteChannel().write(bytes);
+    }
+
+    private static String charsetOf(String contentType) {
+        int i = contentType.toLowerCase().indexOf("charset=");
+        if (i < 0) {
+            return "UTF-8";
+        }
+        return contentType.substring(i + "charset=".length()).trim();
     }
 
     public Server start(String addrStr, int port) throws IOException {

@@ -51,9 +51,14 @@ tasks.register('uberJar', Jar) {
 }
 
 dependencies {
+    testImplementation 'org.testng:testng:6.9.6'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.4.2'
     implementation 'com.fasterxml.jackson.core:jackson-core:2.4.2'
     implementation 'com.fasterxml.jackson.core:jackson-annotations:2.4.2'
     api files('libs/simple-5.1.7.1.itkach.jar')
     api project(':slobj')
  }
+
+test {
+    useTestNG()
+}

@@ -71,7 +71,9 @@ public class Slobber implements Container {
             long time = System.currentTimeMillis();
             resp.setValue("Server", "Slobber/1.0 (Simple 5.1.6)");
             resp.setDate("Date", time);
-            resp.setValue("Access-Control-Allow-Origin", req.getValue("Origin"));
+            resp.setValue("X-Content-Type-Options", "nosniff");
+            resp.setValue("Referrer-Policy", "no-referrer");
+            setCorsHeader(req, resp);
             try {
                 if (req.getMethod().equals("GET")) {
                     GET(req, resp);
@@ -83,17 +85,13 @@ public class Slobber implements Container {
                 }
             }
             catch (Exception e) {
-                e.printStackTrace();
-                resp.setValue("Content-Type", "text/plain");
+                L.log(Level.SEVERE, "Request failed: " + req, e);
+                resp.setValue("Content-Type", "text/plain; charset=utf-8");
                 resp.setCode(500);
-                PrintStream out = null;
                 try {
-                    out = resp.getPrintStream();
+                    resp.getPrintStream().print("Internal Server Error");
                 } catch (IOException e1) {
-                    e1.printStackTrace();
-                }
-                if (out != null && !out.checkError()) {
-                    e.printStackTrace(out);
+                    L.log(Level.WARNING, "Could not write error response", e1);
                 }
             }
             try {
@@ -104,6 +102,27 @@ public class Slobber implements Container {
         }
 
         abstract protected void GET(Request req, Response resp) throws Exception;
+
+        private static void setCorsHeader(Request req, Response resp) {
+            String origin = req.getValue("Origin");
+            String trusted = System.getProperty("slobber.cors.origins", "");
+            if (isTrustedOrigin(origin, trusted)) {
+                resp.setValue("Access-Control-Allow-Origin", origin);
+            }
+        }
+
+        static boolean isTrustedOrigin(String origin, String trusted) {
+            if (origin == null) {
+                return false;
+            }
+            String[] trustedOrigins = trusted.split(",");
+            for (String trustedOrigin : trustedOrigins) {
+                if (origin.equals(trustedOrigin.trim())) {
+                    return true;
+                }
+            }
+            return false;
+        }
 
     }
 
@@ -116,6 +135,7 @@ public class Slobber implements Container {
         MimeTypes.put("css", "text/css");
         MimeTypes.put("json", "application/json");
         MimeTypes.put("woff", "application/font-woff");
+        MimeTypes.put("woff2", "font/woff2");
         MimeTypes.put("svg", "image/svg+xml");
         MimeTypes.put("png", "image/png");
         MimeTypes.put("jpg", "image/jpeg");
@@ -163,7 +183,14 @@ public class Slobber implements Container {
                     }
                     fsPath.append(pathSegments[i]);
                 }
-                resourceFile = new File(staticRes, fsPath.toString());
+                File root = staticRes.getCanonicalFile();
+                resourceFile = new File(root, fsPath.toString()).getCanonicalFile();
+                String rootPath = root.getPath();
+                if (!resourceFile.getPath().equals(rootPath)
+                        && !resourceFile.getPath().startsWith(rootPath + File.separator)) {
+                    notFound(resp);
+                    return;
+                }
             }
             if (resourceFile.isDirectory()) {
                 if (!path.getPath().endsWith("/")) {
@@ -223,6 +250,7 @@ public class Slobber implements Container {
     private Map<String, Container> handlers = new HashMap<String, Container>();
     private Container defaultResourceContainer = new ResourceContainer();
     private ObjectMapper json = new ObjectMapper();
+    private Connection connection;
 
     private Comparator<Slob> createTimeComparator = new Comparator<Slob>() {
         @Override
@@ -573,10 +601,17 @@ public class Slobber implements Container {
 
     public Server start(String addrStr, int port) throws IOException {
         Server server = new ContainerServer(this, 16);
-        Connection connection = new SocketConnection(server);
+        connection = new SocketConnection(server);
         SocketAddress address = new InetSocketAddress(InetAddress.getByName(addrStr), port);
         connection.connect(address);
         return server;
+    }
+
+    public void stop() throws IOException {
+        if (connection != null) {
+            connection.close();
+            connection = null;
+        }
     }
 
     static void notFound(Response resp) throws IOException {

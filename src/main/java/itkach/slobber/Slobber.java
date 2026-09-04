@@ -84,6 +84,13 @@ public class Slobber implements Container {
                     resp.getPrintStream().printf("Method %s is not allowed", req.getMethod());
                 }
             }
+            catch (BadRequestException e) {
+                try {
+                    badRequest(resp);
+                } catch (IOException e1) {
+                    L.log(Level.WARNING, "Could not write bad request response", e1);
+                }
+            }
             catch (Exception e) {
                 L.log(Level.SEVERE, "Request failed: " + req, e);
                 resp.setValue("Content-Type", "text/plain; charset=utf-8");
@@ -108,6 +115,7 @@ public class Slobber implements Container {
             String trusted = System.getProperty("slobber.cors.origins", "");
             if (isTrustedOrigin(origin, trusted)) {
                 resp.setValue("Access-Control-Allow-Origin", origin);
+                resp.setValue("Vary", "Origin");
             }
         }
 
@@ -124,6 +132,12 @@ public class Slobber implements Container {
             return false;
         }
 
+    }
+
+    static class BadRequestException extends Exception {
+        BadRequestException() {
+            super();
+        }
     }
 
     static Map<String, String> MimeTypes = new HashMap<String, String>();
@@ -227,6 +241,11 @@ public class Slobber implements Container {
             String resource = path.toString().substring(1);
             if (resource.equals("")) {
                 resource = "index.html";
+                extension = "html";
+            }
+            if (!isSafeResourcePath(resource) || !MimeTypes.containsKey(extension)) {
+                notFound(resp);
+                return;
             }
             InputStream is = ResourceContainer.class.getClassLoader().getResourceAsStream(resource);
             if (is == null) {
@@ -241,6 +260,19 @@ public class Slobber implements Container {
                 resp.setValue("Cache-Control", "public, max-age=86400");
                 pipe(input, resp.getOutputStream());
             }
+        }
+
+        private static boolean isSafeResourcePath(String resource) {
+            if (resource.indexOf('\\') >= 0) {
+                return false;
+            }
+            String[] segments = resource.split("/");
+            for (String segment : segments) {
+                if (segment.equals(".") || segment.equals("..") || segment.equals("META-INF")) {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
@@ -328,9 +360,15 @@ public class Slobber implements Container {
     }
 
     public Slob.Blob findRandom(Set<String> allowedContentTypes, Slob[] slobs) {
-        if (slobs.length > 0) {
+        List<Slob> nonEmptySlobs = new ArrayList<Slob>();
+        for (Slob slob : slobs) {
+            if (slob.size() > 0) {
+                nonEmptySlobs.add(slob);
+            }
+        }
+        if (!nonEmptySlobs.isEmpty()) {
             for (int i = 0; i < 100; i++) {
-                Slob slob = slobs[random.nextInt(slobs.length)];
+                Slob slob = nonEmptySlobs.get(random.nextInt(nonEmptySlobs.size()));
                 int size = slob.size();
                 Slob.Blob blob = slob.get(random.nextInt(size));
                 String contentType = blob.getContentType();
@@ -395,17 +433,23 @@ public class Slobber implements Container {
                     notFound(response);
                     return;
                 }
-                int limit = q.getInteger("limit") ;
-                if (limit > 10000) {
-                    response.setCode(413);
-                    return;
+                int limit = 100;
+                String limitValue = q.get("limit");
+                if (limitValue != null) {
+                    try {
+                        limit = Integer.parseInt(limitValue);
+                    } catch (NumberFormatException e) {
+                        badRequest(response);
+                        return;
+                    }
                 }
-                if (limit <= 0) {
-                    limit = 100;
+                if (limit <= 0 || limit > 10000) {
+                    badRequest(response);
+                    return;
                 }
                 Iterator<Slob.Blob> result = Slob.find(key, getSlobs());
                 List<Map<String, String>> items = new ArrayList<Map<String, String>>();
-                while (result.hasNext() && items.size() <= limit) {
+                while (result.hasNext() && items.size() < limit) {
                     Slob.Blob b = result.next();
                     Map<String, String> item = new HashMap<String, String>();
                     item.put("url", mkContentURL(b));
@@ -501,7 +545,7 @@ public class Slobber implements Container {
                     OutputStreamWriter os = new OutputStreamWriter(out, "UTF8");
 
                     String slobIdOrUri = pathSegments[1];
-                    slobIdOrUri = URLDecoder.decode(slobIdOrUri, "UTF-8");
+                    slobIdOrUri = decodePathSegment(slobIdOrUri);
                     Slob s = findSlob(slobIdOrUri);
 
                     if (s == null) {
@@ -523,7 +567,7 @@ public class Slobber implements Container {
                 if (pathSegments.length >= 3) {
                     StringBuilder keyBuilder = new StringBuilder();
                     for (int i = 2; i < pathSegments.length; i++) {
-                        String decodedSegment = URLDecoder.decode(pathSegments[i], "UTF-8");
+                        String decodedSegment = decodePathSegment(pathSegments[i]);
                         keyBuilder.append(decodedSegment);
                         if (i < pathSegments.length - 1) {
                             keyBuilder.append('/');
@@ -535,7 +579,7 @@ public class Slobber implements Container {
                 String slobIdOrUri = null;
                 if (pathSegments.length >= 2) {
                     slobIdOrUri = pathSegments[1];
-                    slobIdOrUri = URLDecoder.decode(slobIdOrUri, "UTF-8");
+                    slobIdOrUri = decodePathSegment(slobIdOrUri);
                 }
 
                 Slob slob = getSlob(slobIdOrUri);
@@ -551,9 +595,17 @@ public class Slobber implements Container {
                 }
 
                 if (isSlobId && blobId != null) {
+                    if (!blobId.matches("[0-9]+-[0-9]+")) {
+                        badRequest(resp);
+                        return;
+                    }
                     resp.setValue("Cache-Control", "max-age=31556926");
-                    Slob.Content reader = slob.getContent(blobId);
-                    serveContent(resp, reader);
+                    try {
+                        Slob.Content reader = slob.getContent(blobId);
+                        serveContent(resp, reader);
+                    } catch (IndexOutOfBoundsException e) {
+                        notFound(resp);
+                    }
                     return;
                 }
 
@@ -619,6 +671,22 @@ public class Slobber implements Container {
         resp.setValue("Content-Type", "text/plain");
         PrintStream body = resp.getPrintStream();
         body.printf("Not found");
+    }
+
+    static void badRequest(Response resp) throws IOException {
+        resp.setStatus(Status.BAD_REQUEST);
+        resp.setValue("Content-Type", "text/plain; charset=utf-8");
+        resp.getPrintStream().print("Bad Request");
+    }
+
+    static String decodePathSegment(String segment) throws BadRequestException {
+        try {
+            return URLDecoder.decode(segment, "UTF-8");
+        } catch (IllegalArgumentException e) {
+            throw new BadRequestException();
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public static String mkContentURL(Slob.Blob b) {

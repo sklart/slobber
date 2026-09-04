@@ -1,0 +1,24 @@
+name: Slobber CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: slobber
+      - uses: actions/checkout@v4
+        with:
+          repository: sklart/slobj
+          path: slobj
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Run tests
+        working-directory: slobber
+        run: .\gradlew.bat test --no-daemon

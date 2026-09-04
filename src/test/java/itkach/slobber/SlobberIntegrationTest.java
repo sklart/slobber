@@ -4,6 +4,7 @@ import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
 import static org.testng.AssertJUnit.assertTrue;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
@@ -14,11 +15,13 @@ import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.io.RandomAccessFile;
 import java.net.HttpURLConnection;
+import java.net.BindException;
 import java.net.ServerSocket;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.channels.FileChannel;
 import java.util.Arrays;
+import java.util.List;
 
 import itkach.slob.Slob;
 
@@ -54,10 +57,7 @@ public class SlobberIntegrationTest {
         emptySlob = new Slob(emptySlobChannel, "empty");
         slobber = new Slobber();
         slobber.setSlobs(Arrays.asList(slob, unicodeSlob));
-        ServerSocket socket = new ServerSocket(0);
-        port = socket.getLocalPort();
-        socket.close();
-        slobber.start("127.0.0.1", port);
+        startServerWithRetry();
     }
 
     @AfterClass
@@ -113,6 +113,11 @@ public class SlobberIntegrationTest {
 
         HttpURLConnection missing = request("/slob/" + slob.getId() + "/example?blob=9999-9999");
         assertEquals(404, missing.getResponseCode());
+
+        assertEquals(400, request("/slob/" + slob.getId()
+                + "/example?blob=999999999999999999999-0").getResponseCode());
+        assertEquals(400, request("/slob/" + slob.getId()
+                + "/example?blob=0-999999999999999999999").getResponseCode());
     }
 
     @Test
@@ -124,7 +129,9 @@ public class SlobberIntegrationTest {
         HttpURLConnection find = request("/find?key=example&limit=1");
         assertEquals(200, find.getResponseCode());
         assertTrue(find.getContentType().startsWith("application/json"));
-        assertTrue(read(find).contains("example"));
+        List items = new ObjectMapper().readValue(read(find), List.class);
+        assertTrue(items.size() <= 1);
+        assertTrue(items.toString().contains("example"));
 
         HttpURLConnection random = request("/random");
         assertEquals(200, random.getResponseCode());
@@ -255,5 +262,21 @@ public class SlobberIntegrationTest {
             for (File child : children) delete(child);
         }
         file.delete();
+    }
+
+    private void startServerWithRetry() throws Exception {
+        BindException lastFailure = null;
+        for (int i = 0; i < 3; i++) {
+            ServerSocket socket = new ServerSocket(0);
+            port = socket.getLocalPort();
+            socket.close();
+            try {
+                slobber.start("127.0.0.1", port);
+                return;
+            } catch (BindException e) {
+                lastFailure = e;
+            }
+        }
+        throw lastFailure;
     }
 }

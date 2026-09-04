@@ -599,6 +599,13 @@ public class Slobber implements Container {
                         badRequest(resp);
                         return;
                     }
+                    try {
+                        Integer.parseInt(blobId.substring(0, blobId.indexOf('-')));
+                        Integer.parseInt(blobId.substring(blobId.indexOf('-') + 1));
+                    } catch (NumberFormatException e) {
+                        badRequest(resp);
+                        return;
+                    }
                     resp.setValue("Cache-Control", "max-age=31556926");
                     try {
                         Slob.Content reader = slob.getContent(blobId);
